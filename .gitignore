@@ -1,3 +1,14 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.jar
 .idea
-__pycache__
-bfg.jar
+
+# Virtual environments
+.venv
+.env
+unsloth_compiled_cache/
