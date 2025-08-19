@@ -3,96 +3,97 @@ import cv2
 import time
 from configs.config import YOLOv8, OCR
 
+class Process:
+    def __init__(self,yolo_session,ocr_session, characters):
+        self.characters = characters
+        self.yolo_session = yolo_session
+        self.ocr_session = ocr_session
 
-def process_image(image, output_path, yolo_session, ocr_session, characters):
-    # YOLO inference
-    detections = YOLOv8(image, yolo_session ).main()
-    # Perform object detection and obtain the output image
-    all_crop_images = []
-    for box in detections:
-        x, y, w, h = box
-        x, y, w, h = int(x), int(y), int(w), int(h)
-
-        # Tính tọa độ góc dưới bên phải
-        x2 = x + w
-        y2 = y + h
-        all_crop_images.append(image[y:y2, x:x2])
-    plates = OCR(ocr_session, characters).main(all_crop_images)
-    print(plates)
-
-
-# -------------------- VIDEO PROCESSING --------------------
-
-def process_video(video_path, save_path, yolo_session, ocr_session, characters):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("[ERROR] Không thể mở video!")
-        return
-
-    # Lấy thông tin khung hình gốc để khởi tạo VideoWriter
-    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Hoặc 'XVID', 'avc1' tùy vào codec bạn cài
-
-    # Kích thước sau resize
-    out_w, out_h = 1280, 720
-    out = cv2.VideoWriter(save_path, fourcc, fps, (out_w, out_h))
-
-    frame_nmr = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        start_time = time.time()
-        detections = YOLOv8(frame, yolo_session).main()
-
+    # -------------------- IMAGE PROCESSING --------------------
+    def process_image(self,image):
+        self.image = image
+        # YOLO inference
+        detections = YOLOv8(self.image, self.yolo_session ).main()
         all_crop_images = []
-        all_bboxs = []
-        for box in detections:
-            x, y, w, h = map(int, box)
-            x2, y2 = x + w, y + h
-            all_bboxs.append([x, y, x2, y2])
-            cv2.rectangle(frame, (x, y), (x2, y2), (0, 255, 0), 5)
-            all_crop_images.append(frame[y:y2, x:x2])
-
-        plates = OCR(ocr_session, characters).main(all_crop_images)
+        all_bboxes = []
         plate_results = []
-        for text, box in zip(plates, all_bboxs):
-            x, y, _, _ = box
-            if text:
-                cv2.putText(frame, str(text[0]), (x, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 255, 0), 5)
-                plate_results.append({'text': text, 'bbox': box})
+        for box in detections:
+            x, y, w, h = box
+            x2 = int(x + w)
+            y2 = int(y + h)
+            x1 = int(x)
+            y1 = int(y) 
+            all_bboxes.append((x1, y1, x2, y2))
+            all_crop_images.append(self.image[y1:y2, x1:x2])
+            
+        plates = OCR(self.ocr_session, self.characters).main(all_crop_images)
+        for (x1,y1,x2,y2), plate in zip(all_bboxes, plates):
+            plate_results.append({
+                                "plate_text": plate,
+                                "bbox": [x1, y1, x2, y2]
+                            })
+        return plate_results
 
-        # Ghi FPS lên góc phải trên
-        frame_time = time.time() - start_time
-        current_fps = 1.0 / frame_time if frame_time > 0 else 0
-        fps_text = f"FPS: {current_fps:.2f}"
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 3
-        thickness = 4
-        text_size, _ = cv2.getTextSize(fps_text, font, font_scale, thickness)
-        x_pos = frame.shape[1] - text_size[0] - 50
-        y_pos = 90
-        cv2.putText(frame, fps_text, (x_pos, y_pos), font, font_scale, (255, 180, 100), thickness)
 
-        # Resize và ghi frame vào video
-        frame_resized = cv2.resize(frame, (out_w, out_h))
-        out.write(frame_resized)
+    # -------------------- VIDEO PROCESSING --------------------
 
-        print(f"[FRAME {frame_nmr}] FPS: {current_fps:.2f}")
-        if plate_results:
-            for plate in plate_results:
-                print(f"Biển số: {plate['text']}, BBox: {plate['bbox']}")
-        else:
-            print("Không phát hiện biển số nào sau khi OCR.")
+    def process_video(self, video: str, frame_stride: int = 1):
+        cap = cv2.VideoCapture(int(video)) if str(video).isdigit() else cv2.VideoCapture(video)
+        if not cap.isOpened():
+            raise RuntimeError("[process_video] Không thể mở video: {}".format(video))
 
-        frame_nmr += 1
+        plate_results = []
+        frame_idx = 0
 
-    cap.release()
-    out.release()
-    print(f"✅ Video đã xử lý xong và lưu tại: {save_path}")
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_idx % frame_stride == 0:
+                    start = time.time()
+                    detections = YOLOv8(frame, self.yolo_session).main()  # placeholder
+
+                    crops = []
+                    bboxs = []
+                    for box in detections:
+                        x, y, w, h = map(int, box)
+                        x1, y1 = max(0, x), max(0, y)
+                        x2, y2 = x1 + max(0, w), y1 + max(0, h)
+                        x2 = min(frame.shape[1]-1, x2)
+                        y2 = min(frame.shape[0]-1, y2)
+                        bboxs.append([x1, y1, x2, y2])
+                        # crop safe
+                        crops.append(frame[y1:y2, x1:x2])
+
+                    # --- OCR trên các crops ---
+                    plates = []
+                    if crops:
+                        plates = OCR(self.ocr_session, self.characters).main(crops)  # placeholder
+
+                    # build results
+                    for maybe_text, box in zip(plates, bboxs):
+                        text = None
+                        if maybe_text is None:
+                            text = ""
+                        elif isinstance(maybe_text, (list, tuple)):
+                            txt0 = maybe_text[0] if len(maybe_text) > 0 else ""
+                            text = txt0 if isinstance(txt0, str) else str(txt0)
+                        else:
+                            text = str(maybe_text)
+
+                        plate_results.append({
+                            "frame_id": frame_idx,
+                            "plate_text": text,
+                            "bbox": [int(box[0]), int(box[1]), int(box[2]), int(box[3])]
+                        })
+
+                    elapsed = time.time() - start
+                frame_idx += 1
+
+        finally:
+            cap.release()
+
+        return plate_results
 
 
