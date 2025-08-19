@@ -193,7 +193,7 @@ class YOLOv8:
         # Return the preprocessed image data
         return image_data, pad
 
-    def postprocess(self, input_image: np.ndarray, output: List[np.ndarray], pad: Tuple[int, int]) -> np.ndarray:
+    def postprocess(self, output: List[np.ndarray], pad: Tuple[int, int]) -> np.ndarray:
         """
         Perform post-processing on the model's output to extract and visualize detections.
 
@@ -285,18 +285,18 @@ class YOLOv8:
         outputs = self.session.run(None, {model_inputs[0].name: img_data})
 
         # Perform post-processing on the outputs to obtain output image.
-        return self.postprocess(self.img, outputs, pad)  # output image
+        return self.postprocess(outputs, pad)  # output image
 
 
 
 class OCR:
-    def __init__(self, ocr_session, characters, img_shape=(48, 320), batch_size=8):
+    def __init__(self, ocr_session, characters, confidence_thres:float = 0.5, img_shape=(48, 320), batch_size=8):
         self.session = ocr_session
         self.input_name = self.session.get_inputs()[0].name
         self.img_shape = img_shape  # (H, W)
         self.batch_size = batch_size
         self.characters = characters
-
+        self.conf_score = confidence_thres   
     def preprocess(self, image):
         target_h, target_w = self.img_shape
         h, w, _ = image.shape
@@ -325,7 +325,6 @@ class OCR:
         img_norm = np.transpose(img_norm, (2, 0, 1))  # (H, W, C) → (C, H, W)
         return img_norm
 
-    import re
 
     def ctc_decode(self, output):
         results = []
@@ -351,8 +350,8 @@ class OCR:
                 last_char = char_id
 
             avg_score = float(score_sum) / count if count > 0 else 0.0
-            if avg_score > 0.6:
-                results.append((text, avg_score))
+            if avg_score >= self.conf_score:
+                results.append(text)
 
         return results
 
